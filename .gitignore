@@ -1,0 +1,13 @@
+# .gitignore
+# --- SECURITY ---
+# I am hiding my API keys so hackers don't steal my credits!
+.env
+.streamlit/secrets.toml
+
+# --- JUNK FILES ---
+# These are temporary folders my computer creates. I don't need to save them.
+__pycache__/
+*.pyc
+.DS_Store
+Thumbs.db
+venv/
