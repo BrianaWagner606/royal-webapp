@@ -12,7 +12,8 @@ dependencies = [
     "uvicorn[standard] (>=0.40.0,<0.41.0)",
     "python-dotenv (>=1.2.1,<2.0.0)",
     "python-multipart (>=0.0.21,<0.0.22)",
-    "pypdf (>=6.5.0,<7.0.0)"
+    "pypdf (>=6.5.0,<7.0.0)",
+    "sqlalchemy (>=2.0.45,<3.0.0)"
 ]
 
 
