@@ -1,0 +1,47 @@
+/* frontend/src/App.css */
+.app-container {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 2rem;
+  text-align: center;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+.card {
+  background: #f9f9f9;
+  padding: 2em;
+  border-radius: 8px;
+  box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+  margin-top: 20px;
+  color: #333;
+}
+
+h1 {
+  color: #646cff;
+}
+
+.question-card {
+  text-align: left;
+  border-left: 5px solid #646cff; /* A purple accent bar */
+}
+
+.options-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr; /* Two columns */
+  gap: 10px;
+  margin-top: 15px;
+}
+
+.option-btn {
+  background: white;
+  border: 1px solid #ddd;
+  padding: 10px;
+  cursor: pointer;
+  transition: all 0.2s;
+  color: #333;
+}
+
+.option-btn:hover {
+  background: #f0f0ff;
+  border-color: #646cff;
+}
