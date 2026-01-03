@@ -66,3 +66,35 @@ button:focus-visible {
     background-color: #f9f9f9;
   }
 }
+
+/* The Energy Counter */
+.energy-display {
+  font-weight: bold;
+  color: #ffaa00; /* Gold color */
+  font-size: 1.2rem;
+  background: #333;
+  padding: 5px 15px;
+  border-radius: 20px;
+}
+
+.stats-bar {
+  display: flex;
+  justify-content: center;
+  gap: 20px;
+  align-items: center;
+}
+
+/* Feedback Colors */
+.question-card.correct {
+  border-left-color: #00cc66; /* Green border */
+  background-color: #f0fff4;
+}
+
+.question-card.incorrect {
+  border-left-color: #ff4444; /* Red border */
+  background-color: #fff0f0;
+}
+
+.success-msg { color: #00cc66; font-weight: bold; }
+.error-msg { color: #ff4444; font-weight: bold; }
+

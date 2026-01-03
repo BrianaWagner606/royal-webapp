@@ -4,12 +4,16 @@ import './App.css'
 function App() {
   const [status, setStatus] = useState("Checking...")
   
-  // 1. New State Variables
-  const [file, setFile] = useState(null)          // Stores the PDF the user picked
-  const [quiz, setQuiz] = useState(null)          // Stores the questions we get back
-  const [loading, setLoading] = useState(false)   // Are we waiting for the AI?
+  // State for the PDF Upload
+  const [file, setFile] = useState(null)
+  const [loading, setLoading] = useState(false)
+  
+  // State for the Game
+  const [quiz, setQuiz] = useState(null)
+  const [energy, setEnergy] = useState(0)      
+  const [feedback, setFeedback] = useState({}) 
 
-  // System Health Check (Keep this!)
+  // 1. SYSTEM HEALTH CHECK (Runs on startup)
   useEffect(() => {
     fetch("http://127.0.0.1:8000/")
       .then(res => res.json())
@@ -17,36 +21,56 @@ function App() {
       .catch(() => setStatus("Disconnected ❌"))
   }, [])
 
-  // 2. The "Courier" Function
+  // 2. GENERATE QUIZ (Uploads the PDF)
   const handleGenerateQuiz = async () => {
     if (!file) {
       alert("Please select a Royal Scroll (PDF) first!")
       return
     }
-
-    setLoading(true) // Start the spinning wheel
-
+    setLoading(true)
     try {
-      // A. Create the Package
       const formData = new FormData()
-      formData.append("file", file) // "file" must match the name in Python (@app.post)
+      formData.append("file", file) 
 
-      // B. Send the Courier
       const response = await fetch("http://127.0.0.1:8000/quiz/generate", {
         method: "POST",
-        body: formData, // No "Content-Type" header needed; browser adds it automatically!
+        body: formData,
       })
 
-      // C. Open the Package
       const data = await response.json()
-      console.log("Quiz received:", data) // Helpful for debugging
-      setQuiz(data) // Save the questions to State
+      setQuiz(data) 
 
     } catch (error) {
       console.error("Error generating quiz:", error)
       alert("The Royal Scribe failed to read the scroll.")
     } finally {
-      setLoading(false) // Stop the spinning wheel
+      setLoading(false)
+    }
+  }
+
+  // 3. SUBMIT ANSWER (The Game Logic)
+  const handleAnswerClick = async (questionId, option) => {
+    try {
+      const response = await fetch("http://127.0.0.1:8000/quiz/submit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          question_id: questionId,
+          selected_option: option
+        }),
+      })
+
+      const result = await response.json()
+      
+      if (result.result === "Correct") {
+        setEnergy(energy + result.energy_earned) 
+        setFeedback({ ...feedback, [questionId]: "correct" }) 
+      } else {
+        setFeedback({ ...feedback, [questionId]: "incorrect" }) 
+      }
+
+    } catch (error) {
+      console.error("Network Error:", error)
     }
   }
 
@@ -54,47 +78,56 @@ function App() {
     <div className="app-container">
       <header>
         <h1>🏰 Citadel of Wisdom</h1>
-        <p>System Status: <strong>{status}</strong></p>
+        <div className="stats-bar">
+             <p>Status: {status}</p>
+             <p className="energy-display">⚡ Energy: {energy}</p>
+        </div>
       </header>
       
       <main>
-        {/* VIEW 1: The Upload Station */}
+        {/* VIEW 1: Upload Station */}
         {!quiz && (
           <div className="card">
-            <h2>upload Study Material</h2>
+            <h2>Upload Study Material</h2>
             <p>Upload a PDF to generate a challenge.</p>
-            
             <input 
               type="file" 
               accept=".pdf" 
               onChange={(e) => setFile(e.target.files[0])} 
             />
-            
             <br /><br />
-            
             <button onClick={handleGenerateQuiz} disabled={loading}>
               {loading ? "Consulting the Scribes..." : "Generate Quiz ✨"}
             </button>
           </div>
         )}
 
-        {/* VIEW 2: The Quiz Arena */}
+        {/* VIEW 2: The Game Arena */}
         {quiz && (
           <div className="quiz-container">
             <h2>⚔️ Knowledge Challenge</h2>
             {quiz.map((q) => (
-              <div key={q.id} className="card question-card">
+              <div 
+                key={q.id} 
+                className={`card question-card ${feedback[q.id]}`} 
+              >
                 <h3>{q.question}</h3>
                 <div className="options-grid">
                   {q.options.map((option, index) => (
-                    <button key={index} className="option-btn">
+                    <button 
+                      key={index} 
+                      className="option-btn"
+                      onClick={() => handleAnswerClick(q.id, option)}
+                      disabled={feedback[q.id]} 
+                    >
                       {option}
                     </button>
                   ))}
                 </div>
+                {feedback[q.id] === "correct" && <p className="success-msg">✨ Correct! +100 Energy</p>}
+                {feedback[q.id] === "incorrect" && <p className="error-msg">❌ Incorrect</p>}
               </div>
             ))}
-            
             <br />
             <button onClick={() => setQuiz(null)}>Upload Another Scroll</button>
           </div>
