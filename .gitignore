@@ -1,3 +1,12 @@
-# .gitignore
-# I am telling Git to completely ignore my secret vault.
+# IGNORE SECRETS
 .env
+.env.local
+
+# IGNORE JUNK
+node_modules/
+__pycache__/
+venv/
+.venv/
+dist/
+.DS_Store
+.git

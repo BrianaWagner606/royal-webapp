@@ -1,36 +1,28 @@
 # app/main.py
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from dotenv import load_dotenv
-from app.routers import quiz, system
 from app.database import engine, Base
+from app.routers import quiz, shop, system # Make sure all your routers are here
 
-# Load env vars once at startup
-load_dotenv()
-
-
+# Create DB Tables (This is a comment now!)
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(
-    title="Citadel of Wisdom API",
-    version="1.0.0"
-)
-# ---------------------------------------------------------
-# THE ROYAL DECREE (CORS POLICY)
-# ---------------------------------------------------------
-# I am allowing my frontend (which will run on port 5173)
-# to talk to this backend.
-origins = [
-    "http://localhost:5173", # The standard Vite/React port
-    "http://localhost:3000", # The standard React port
-]
+app = FastAPI()
 
+# CORS Middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["*"], # Allow all types of requests (GET, POST, etc.)
-    allow_headers=["*"], # Allow all headers
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
-app.include_router(system.router)
+
+# Register the Routers
 app.include_router(quiz.router)
+app.include_router(shop.router)
+# app.include_router(system.router) # Uncomment if you are using system.py
+
+@app.get("/")
+def read_root():
+    return {"status": "Healthy", "message": "The Citadel is open!"}

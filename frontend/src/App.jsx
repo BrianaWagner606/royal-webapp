@@ -1,135 +1,271 @@
 import { useState, useEffect } from 'react'
+import BattleArena from './components/BattleArena'
 import './App.css'
 
 function App() {
-  const [status, setStatus] = useState("Checking...")
+  const [status, setStatus] = useState("Checking Radar...")
   
-  // State for the PDF Upload
+  // Game State
+  const [energy, setEnergy] = useState(0) 
+  const [defense, setDefense] = useState({ tower_level: 1, archers: 0, wall_health: 100 })
+  const [isBattling, setIsBattling] = useState(false)
+  
+  // Quiz State
   const [file, setFile] = useState(null)
-  const [loading, setLoading] = useState(false)
-  
-  // State for the Game
   const [quiz, setQuiz] = useState(null)
-  const [energy, setEnergy] = useState(0)      
-  const [feedback, setFeedback] = useState({}) 
+  const [feedback, setFeedback] = useState({})
+  
+  // Loading State
+  const [loading, setLoading] = useState(false)
+  const [progress, setProgress] = useState(0)
+  const [loadingText, setLoadingText] = useState("")
 
-  // 1. SYSTEM HEALTH CHECK (Runs on startup)
+  // --- HELPER FUNCTIONS ---
+  const updateDefenseStatus = async () => {
+    try {
+      const res = await fetch("http://127.0.0.1:8000/shop/status")
+      const data = await res.json()
+      setDefense(data)
+    } catch (e) { console.error("Could not fetch base status") }
+  }
+
+  // --- STARTUP ---
   useEffect(() => {
     fetch("http://127.0.0.1:8000/")
       .then(res => res.json())
       .then(data => setStatus(data.status))
-      .catch(() => setStatus("Disconnected ❌"))
+      .catch(() => setStatus("Offline 💀"))
+
+    fetch("http://127.0.0.1:8000/quiz/energy")
+      .then(res => res.json())
+      .then(data => setEnergy(data.energy))
+
+    updateDefenseStatus() 
   }, [])
 
-  // 2. GENERATE QUIZ (Uploads the PDF)
+  // --- HANDLERS ---
+  const handleBuy = async (itemType) => {
+    try {
+      const res = await fetch("http://127.0.0.1:8000/shop/buy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ item_type: itemType })
+      })
+      
+      if (!res.ok) {
+        alert("Not enough Brains! Study more!")
+        return
+      }
+      const data = await res.json()
+      setEnergy(data.energy)
+      setDefense({ tower_level: data.tower_level, archers: data.archers, wall_health: data.wall_health })
+    } catch (error) { console.error("Shop Error:", error) }
+  }
+
   const handleGenerateQuiz = async () => {
-    if (!file) {
-      alert("Please select a Royal Scroll (PDF) first!")
-      return
-    }
-    setLoading(true)
+    if (!file) return alert("Upload a document first!")
+    
+    // Reset Feedback
+    setFeedback({}) 
+    
+    // Start Loading Animation
+    setLoading(true); 
+    setProgress(0); 
+    setLoadingText("Scanning for Fresh Brains...")
+    
+    // Fake progress bar filler
+    const interval = setInterval(() => {
+      setProgress((old) => {
+        if (old >= 90) return old;
+        return Math.min(old + Math.random() * 10, 90);
+      })
+    }, 800)
+
     try {
       const formData = new FormData()
       formData.append("file", file) 
-
-      const response = await fetch("http://127.0.0.1:8000/quiz/generate", {
-        method: "POST",
-        body: formData,
-      })
-
+      const response = await fetch("http://127.0.0.1:8000/quiz/generate", { method: "POST", body: formData })
       const data = await response.json()
-      setQuiz(data) 
+      
+      clearInterval(interval); 
+      setProgress(100); 
+      setLoadingText("Horde Incoming! 🧟")
+      
+      // Short delay before showing quiz so you see the bar finish
+      setTimeout(() => { 
+          setQuiz(data); 
+          setLoading(false) 
+      }, 500)
 
     } catch (error) {
-      console.error("Error generating quiz:", error)
-      alert("The Royal Scribe failed to read the scroll.")
-    } finally {
+      clearInterval(interval); 
       setLoading(false)
+      alert("The AI is a Zombie today (Error).")
     }
   }
 
-  // 3. SUBMIT ANSWER (The Game Logic)
-  const handleAnswerClick = async (questionId, option) => {
-    try {
-      const response = await fetch("http://127.0.0.1:8000/quiz/submit", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          question_id: questionId,
-          selected_option: option
-        }),
-      })
+  // Refresh / Scavenge Again Logic
+  const handleRefresh = () => {
+    setQuiz(null); // Hide questions
+    handleGenerateQuiz(); // Run generation immediately
+  }
 
-      const result = await response.json()
-      
-      if (result.result === "Correct") {
-        setEnergy(energy + result.energy_earned) 
-        setFeedback({ ...feedback, [questionId]: "correct" }) 
-      } else {
-        setFeedback({ ...feedback, [questionId]: "incorrect" }) 
+  // --- SMART JUDGE ANSWER HANDLER ---
+  const handleAnswerClick = async (questionId, option, correctAnswer) => {
+    // 1. Normalize strings
+    const cleanOption = option.toString().trim()
+    const cleanAnswer = correctAnswer.toString().trim()
+
+    // 2. Strict Check
+    let isCorrect = cleanOption === cleanAnswer
+
+    // 3. Fuzzy Check (Fixes the "C" vs "C. Text" bug)
+    if (!isCorrect) {
+      // If Answer is "C" and Option starts with "C"
+      if (cleanAnswer.length === 1 && cleanOption.startsWith(cleanAnswer)) {
+        isCorrect = true
       }
-
-    } catch (error) {
-      console.error("Network Error:", error)
+      // If Option is "C" and Answer starts with "C" (rare, but possible)
+      else if (cleanOption.length === 1 && cleanAnswer.startsWith(cleanOption)) {
+        isCorrect = true
+      }
     }
+
+    if (isCorrect) {
+      setFeedback({ ...feedback, [questionId]: "correct" }) 
+      try {
+        await fetch("http://127.0.0.1:8000/quiz/earn", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ energy: 100 })
+        })
+        setEnergy(prev => prev + 100)
+      } catch(e) { console.error(e) }
+    } else {
+      setFeedback({ ...feedback, [questionId]: "incorrect" }) 
+    }
+  }
+
+  // Battle Logic
+  const handleBattleEnd = (result, remainingWallHp) => {
+    setIsBattling(false)
+    if (result === 'won') {
+        alert(`Night Survived! You earned 500 Brains!`)
+        fetch("http://127.0.0.1:8000/quiz/earn", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ energy: 500 })
+        }).then(() => setEnergy(prev => prev + 500))
+    } else {
+        alert("Base Overrun! Repair your walls!")
+    }
+    setDefense(prev => ({...prev, wall_health: remainingWallHp}))
   }
 
   return (
     <div className="app-container">
       <header>
-        <h1>🏰 Citadel of Wisdom</h1>
+        <h1>🧟 Zombies Like Brains</h1>
         <div className="stats-bar">
-             <p>Status: {status}</p>
-             <p className="energy-display">⚡ Energy: {energy}</p>
+             <p>System: {status}</p>
+             <p className="energy-display">🧠 Brains: {energy}</p>
         </div>
       </header>
       
       <main>
-        {/* VIEW 1: Upload Station */}
-        {!quiz && (
+        {/* VIEW 1: BATTLE ARENA */}
+        {isBattling ? (
+            <BattleArena defense={defense} onBattleEnd={handleBattleEnd} />
+        ) : (
+            /* VIEW 2: DASHBOARD */
+            <div className="castle-dashboard">
+            <div className="castle-stats">
+                <h3>🛡️ Survivor Base</h3>
+                <div className="stat-row">🏘️ Base Level: <strong>{defense.tower_level}</strong></div>
+                <div className="stat-row">🧱 Wall Health: <strong>{defense.wall_health}</strong></div>
+                <div className="stat-row">🔫 Snipers: <strong>{defense.archers}</strong></div>
+                
+                <button 
+                    className="start-battle-btn"
+                    onClick={() => setIsBattling(true)}
+                    disabled={defense.wall_health <= 0}
+                    style={{marginTop: 20, width: '100%', background: '#ef4444'}}
+                >
+                    {defense.wall_health > 0 ? "⚔️ SURVIVE THE NIGHT" : "💀 REPAIR WALLS FIRST"}
+                </button>
+            </div>
+            
+            <div className="shop-section">
+                <h3>🛒 Scavenger Shop</h3>
+                <div className="shop-grid">
+                <button className="shop-btn" onClick={() => handleBuy("upgrade_tower")} disabled={energy < 200}>
+                    <span>Upgrade Base</span> <span className="cost">200 🧠</span>
+                </button>
+                <button className="shop-btn" onClick={() => handleBuy("hire_archer")} disabled={energy < 100}>
+                    <span>Hire Sniper</span> <span className="cost">100 🧠</span>
+                </button>
+                <button className="shop-btn" onClick={() => handleBuy("repair_wall")} disabled={energy < 50}>
+                    <span>Repair Wall</span> <span className="cost">50 🧠</span>
+                </button>
+                </div>
+            </div>
+            </div>
+        )}
+
+        {/* VIEW 3: UPLOAD CARD (Shows when NOT battling and NO quiz) */}
+        {!isBattling && !quiz && (
           <div className="card">
-            <h2>Upload Study Material</h2>
-            <p>Upload a PDF to generate a challenge.</p>
-            <input 
-              type="file" 
-              accept=".pdf" 
-              onChange={(e) => setFile(e.target.files[0])} 
-            />
+            <h2>📁 Upload Intel (PDF)</h2>
+            
+            {/* Hide file input while loading so you don't double upload */}
+            {!loading && (
+                <input type="file" accept=".pdf" onChange={(e) => setFile(e.target.files[0])} />
+            )}
+            
             <br /><br />
-            <button onClick={handleGenerateQuiz} disabled={loading}>
-              {loading ? "Consulting the Scribes..." : "Generate Quiz ✨"}
-            </button>
+            
+            {/* Show Button OR Loading Bar */}
+            {!loading ? (
+                <button onClick={handleGenerateQuiz}>Analyze Intel 🧠</button>
+            ) : (
+                <div className="loading-section">
+                    <div className="progress-container">
+                        {/* THIS IS THE LOADING BAR */}
+                        <div className="progress-bar" style={{width: `${progress}%`}}></div>
+                    </div>
+                    <p className="loading-text">{loadingText}</p>
+                </div>
+            )}
           </div>
         )}
 
-        {/* VIEW 2: The Game Arena */}
-        {quiz && (
+        {/* VIEW 4: QUIZ CARD (Shows when NOT battling and Quiz EXISTS) */}
+        {!isBattling && quiz && (
           <div className="quiz-container">
-            <h2>⚔️ Knowledge Challenge</h2>
+            <h2>⚔️ Fight for Knowledge</h2>
             {quiz.map((q) => (
-              <div 
-                key={q.id} 
-                className={`card question-card ${feedback[q.id]}`} 
-              >
+              <div key={q.id} className={`card question-card ${feedback[q.id]}`}>
                 <h3>{q.question}</h3>
                 <div className="options-grid">
                   {q.options.map((option, index) => (
-                    <button 
-                      key={index} 
-                      className="option-btn"
-                      onClick={() => handleAnswerClick(q.id, option)}
-                      disabled={feedback[q.id]} 
-                    >
+                    <button key={index} className="option-btn" onClick={() => handleAnswerClick(q.id, option, q.answer)} disabled={feedback[q.id]}>
                       {option}
                     </button>
                   ))}
                 </div>
-                {feedback[q.id] === "correct" && <p className="success-msg">✨ Correct! +100 Energy</p>}
-                {feedback[q.id] === "incorrect" && <p className="error-msg">❌ Incorrect</p>}
+                {feedback[q.id] && (
+                    <div className={`explanation-box ${feedback[q.id]}`}>
+                        <h4>{feedback[q.id] === "correct" ? "✅ Correct!" : "❌ Incorrect"}</h4>
+                        <p className="answer-reveal"><strong>Correct Answer:</strong> {q.answer}</p>
+                        <p className="explanation-text">🎓 <strong>Why:</strong> {q.explanation}</p>
+                    </div>
+                )}
               </div>
             ))}
-            <br />
-            <button onClick={() => setQuiz(null)}>Upload Another Scroll</button>
+            <div className="action-buttons">
+                <button className="refresh-btn" onClick={handleRefresh}>🔄 Scavenge Again</button>
+                <button className="secondary-btn" onClick={() => {setQuiz(null); setFile(null)}}>📁 New File</button>
+            </div>
           </div>
         )}
       </main>
