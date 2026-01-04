@@ -10,6 +10,12 @@ function App() {
   const [defense, setDefense] = useState({ tower_level: 1, archers: 0, wall_health: 100 })
   const [isBattling, setIsBattling] = useState(false)
   
+  // NEW: STREAK SYSTEM 🩸
+  const [streak, setStreak] = useState(0)
+  
+  // NEW: RADIO MESSAGE (Replaces Alert) 📻
+  const [radioMsg, setRadioMsg] = useState(null) // { title: "...", body: "..." }
+  
   // Quiz State
   const [file, setFile] = useState(null)
   const [quiz, setQuiz] = useState(null)
@@ -44,6 +50,10 @@ function App() {
   }, [])
 
   // --- HANDLERS ---
+  const showRadio = (title, body) => {
+    setRadioMsg({ title, body })
+  }
+
   const handleBuy = async (itemType) => {
     try {
       const res = await fetch("http://127.0.0.1:8000/shop/buy", {
@@ -53,7 +63,7 @@ function App() {
       })
       
       if (!res.ok) {
-        alert("Not enough Brains! Study more!")
+        showRadio("❌ Access Denied", "Not enough Brains! Scavenge more intel.")
         return
       }
       const data = await res.json()
@@ -63,17 +73,11 @@ function App() {
   }
 
   const handleGenerateQuiz = async () => {
-    if (!file) return alert("Upload a document first!")
+    if (!file) return showRadio("⚠️ No Intel", "Upload a document first!")
     
-    // Reset Feedback
     setFeedback({}) 
+    setLoading(true); setProgress(0); setLoadingText("Scanning for Fresh Brains...")
     
-    // Start Loading Animation
-    setLoading(true); 
-    setProgress(0); 
-    setLoadingText("Scanning for Fresh Brains...")
-    
-    // Fake progress bar filler
     const interval = setInterval(() => {
       setProgress((old) => {
         if (old >= 90) return old;
@@ -87,83 +91,97 @@ function App() {
       const response = await fetch("http://127.0.0.1:8000/quiz/generate", { method: "POST", body: formData })
       const data = await response.json()
       
-      clearInterval(interval); 
-      setProgress(100); 
-      setLoadingText("Horde Incoming! 🧟")
-      
-      // Short delay before showing quiz so you see the bar finish
-      setTimeout(() => { 
-          setQuiz(data); 
-          setLoading(false) 
-      }, 500)
+      clearInterval(interval); setProgress(100); setLoadingText("Horde Incoming! 🧟")
+      setTimeout(() => { setQuiz(data); setLoading(false) }, 500)
 
     } catch (error) {
-      clearInterval(interval); 
-      setLoading(false)
-      alert("The AI is a Zombie today (Error).")
+      clearInterval(interval); setLoading(false)
+      showRadio("💀 Signal Lost", "The AI is a Zombie today (Error).")
     }
   }
 
-  // Refresh / Scavenge Again Logic
   const handleRefresh = () => {
-    setQuiz(null); // Hide questions
-    handleGenerateQuiz(); // Run generation immediately
+    setQuiz(null); 
+    setStreak(0); // Reset streak on new round
+    handleGenerateQuiz(); 
   }
 
-  // --- SMART JUDGE ANSWER HANDLER ---
+  // --- ANSWER HANDLER WITH STREAK LOGIC ---
   const handleAnswerClick = async (questionId, option, correctAnswer) => {
-    // 1. Normalize strings
     const cleanOption = option.toString().trim()
     const cleanAnswer = correctAnswer.toString().trim()
-
-    // 2. Strict Check
+    
+    // Fuzzy Matching
     let isCorrect = cleanOption === cleanAnswer
-
-    // 3. Fuzzy Check (Fixes the "C" vs "C. Text" bug)
     if (!isCorrect) {
-      // If Answer is "C" and Option starts with "C"
-      if (cleanAnswer.length === 1 && cleanOption.startsWith(cleanAnswer)) {
-        isCorrect = true
-      }
-      // If Option is "C" and Answer starts with "C" (rare, but possible)
-      else if (cleanOption.length === 1 && cleanAnswer.startsWith(cleanOption)) {
-        isCorrect = true
-      }
+      if (cleanAnswer.length === 1 && cleanOption.startsWith(cleanAnswer)) isCorrect = true
+      else if (cleanOption.length === 1 && cleanAnswer.startsWith(cleanOption)) isCorrect = true
     }
 
     if (isCorrect) {
       setFeedback({ ...feedback, [questionId]: "correct" }) 
+      
+      // STREAK MATH
+      const newStreak = streak + 1
+      setStreak(newStreak)
+      
+      let points = 100
+      let msg = ""
+      
+      // Combo Multipliers
+      if (newStreak >= 3) { points = 200; msg = " (RAMPAGE! 2x)" }
+      if (newStreak >= 5) { points = 300; msg = " (GODLIKE! 3x)" }
+
       try {
         await fetch("http://127.0.0.1:8000/quiz/earn", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ energy: 100 })
+            body: JSON.stringify({ energy: points })
         })
-        setEnergy(prev => prev + 100)
+        setEnergy(prev => prev + points)
       } catch(e) { console.error(e) }
+      
     } else {
       setFeedback({ ...feedback, [questionId]: "incorrect" }) 
+      setStreak(0) // Reset streak on fail
     }
   }
 
-  // Battle Logic
   const handleBattleEnd = (result, remainingWallHp) => {
     setIsBattling(false)
     if (result === 'won') {
-        alert(`Night Survived! You earned 500 Brains!`)
+        showRadio("🏆 VICTORY", "Night Survived! +500 Brains!")
         fetch("http://127.0.0.1:8000/quiz/earn", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ energy: 500 })
         }).then(() => setEnergy(prev => prev + 500))
     } else {
-        alert("Base Overrun! Repair your walls!")
+        showRadio("💀 DEFEAT", "Base Overrun! Repair your walls!")
     }
     setDefense(prev => ({...prev, wall_health: remainingWallHp}))
   }
 
   return (
     <div className="app-container">
+      {/* 1. RADIO OVERLAY (Replaces Alerts) */}
+      {radioMsg && (
+        <div className="radio-overlay">
+            <div className="radio-message">
+                <h2>{radioMsg.title}</h2>
+                <p>{radioMsg.body}</p>
+                <button onClick={() => setRadioMsg(null)}>ACKNOWLEDGED</button>
+            </div>
+        </div>
+      )}
+
+      {/* 2. STREAK DISPLAY */}
+      {streak >= 2 && (
+        <div className="streak-counter">
+            🔥 COMBO x{streak >= 5 ? 3 : (streak >= 3 ? 2 : 1)}
+        </div>
+      )}
+
       <header>
         <h1>🧟 Zombies Like Brains</h1>
         <div className="stats-bar">
@@ -173,11 +191,9 @@ function App() {
       </header>
       
       <main>
-        {/* VIEW 1: BATTLE ARENA */}
         {isBattling ? (
             <BattleArena defense={defense} onBattleEnd={handleBattleEnd} />
         ) : (
-            /* VIEW 2: DASHBOARD */
             <div className="castle-dashboard">
             <div className="castle-stats">
                 <h3>🛡️ Survivor Base</h3>
@@ -212,25 +228,18 @@ function App() {
             </div>
         )}
 
-        {/* VIEW 3: UPLOAD CARD (Shows when NOT battling and NO quiz) */}
         {!isBattling && !quiz && (
           <div className="card">
             <h2>📁 Upload Intel (PDF)</h2>
-            
-            {/* Hide file input while loading so you don't double upload */}
             {!loading && (
                 <input type="file" accept=".pdf" onChange={(e) => setFile(e.target.files[0])} />
             )}
-            
             <br /><br />
-            
-            {/* Show Button OR Loading Bar */}
             {!loading ? (
                 <button onClick={handleGenerateQuiz}>Analyze Intel 🧠</button>
             ) : (
                 <div className="loading-section">
                     <div className="progress-container">
-                        {/* THIS IS THE LOADING BAR */}
                         <div className="progress-bar" style={{width: `${progress}%`}}></div>
                     </div>
                     <p className="loading-text">{loadingText}</p>
@@ -239,7 +248,6 @@ function App() {
           </div>
         )}
 
-        {/* VIEW 4: QUIZ CARD (Shows when NOT battling and Quiz EXISTS) */}
         {!isBattling && quiz && (
           <div className="quiz-container">
             <h2>⚔️ Fight for Knowledge</h2>
