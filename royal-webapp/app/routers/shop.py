@@ -7,11 +7,10 @@ from pydantic import BaseModel
 
 router = APIRouter(prefix="/shop", tags=["Shop"])
 
-# Define the cost of items
 PRICES = {
-    "upgrade_tower": 200, # Costs 200 Energy
-    "hire_archer": 100,   # Costs 100 Energy
-    "repair_wall": 50     # Costs 50 Energy
+    "upgrade_tower": 500,
+    "hire_archer": 300,
+    "repair_wall": 100
 }
 
 class PurchaseRequest(BaseModel):

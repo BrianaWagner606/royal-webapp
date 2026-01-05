@@ -1,174 +1,235 @@
-# app/services.py (The Resilient Version)
-import asyncio
-import json
+# royal-webapp/app/services.py
 import os
-import io
-import traceback
+import json
 import random
+import PyPDF2
+import io
+import requests  
+import time
 from sqlalchemy.orm import Session
 from app.models import User
-from pypdf import PdfReader
-import google.generativeai as genai
-from dotenv import load_dotenv
 
-load_dotenv() 
+# --- CONFIGURATION ---
+API_KEY = "AIzaSyDvLiTB2iEFxU36fWo9u3htkiwgurTxGxc"
+
+# --- EMERGENCY ARCHIVE (MOCK DATA) ---
+FALLBACK_QUIZ = [
+    {
+        "id": 101,
+        "question": "Which of these items is essential for silent takedowns?",
+        "options": ["A) Chainsaw", "B) Crossbow", "C) Grenade", "D) Megaphone"],
+        "answer": "B) Crossbow",
+        "explanation": "Crossbows allow for distance kills without alerting the horde."
+    },
+    {
+        "id": 102,
+        "question": "What is the Rule of Three for survival?",
+        "options": ["A) 3 mins air, 3 days water, 3 weeks food", "B) 3 guns, 3 knives, 3 bombs", "C) 3 friends, 3 cars, 3 houses", "D) 3 zombies, 3 bullets, 3 seconds"],
+        "answer": "A) 3 mins air, 3 days water, 3 weeks food",
+        "explanation": "This rule prioritizes immediate survival needs in order of urgency."
+    },
+    {
+        "id": 103,
+        "question": "Where is the safest place to sleep?",
+        "options": ["A) Ground floor window", "B) The roof (if accessible)", "C) A car in an open field", "D) The mall entrance"],
+        "answer": "B) The roof (if accessible)",
+        "explanation": "High ground removes typical access points for the undead."
+    },
+    {
+        "id": 104,
+        "question": "Which signal indicates a safe zone?",
+        "options": ["A) Black Smoke", "B) Red Flare", "C) Three fires in a triangle", "D) Screaming"],
+        "answer": "C) Three fires in a triangle",
+        "explanation": "Internationally recognized distress or safe zone signal."
+    },
+    {
+        "id": 105,
+        "question": "If bitten on the arm, what is the immediate action?",
+        "options": ["A) Bandage it", "B) Apply ice", "C) Amputation (Tourniquet first)", "D) Sleep it off"],
+        "answer": "C) Amputation (Tourniquet first)",
+        "explanation": "Removing the infected limb before the virus spreads to the bloodstream is the only chance."
+    }
+]
 
 class QuizService:
-    def __init__(self):
-        api_key = os.getenv("GEMINI_API_KEY")
-        self.model = None
 
-        if not api_key:
-            print("❌ ERROR: GEMINI_API_KEY is missing.")
-            return
+    def async_generate_quiz_from_pdf(self, file_content):
+        pass 
 
-        try:
-            genai.configure(api_key=api_key)
-            
-            # --- AUTO-DISCOVERY LOGIC ---
-            print("🔍 Asking Google what models are allowed...")
-            found_model = None
-            for m in genai.list_models():
-                if 'generateContent' in m.supported_generation_methods:
-                    if 'flash' in m.name:
-                        found_model = m.name
-                        break
-                    if not found_model:
-                        found_model = m.name
-            
-            if found_model:
-                print(f"✅ Success! Connected to: {found_model}")
-                self.model = genai.GenerativeModel(found_model)
-            else:
-                print(f"❌ No chat models found.")
-            # ---------------------------
-
-        except Exception as e:
-            print(f"❌ Connection Error: {e}")
-
-    async def generate_quiz_from_pdf(self, file_object):
-        if not self.model:
-            return self._error_response("No AI model found.")
-
-        try:
-            # 1. READ PDF (Only do this once!)
-            text = await asyncio.to_thread(self._smart_extract_text, file_object)
-
-            if len(text) < 50:
-                return self._error_response("PDF text is empty (Scanned image?).")
-
-            # 2. ASK AI (With Retry Logic) ♻️
-            # If the AI makes a typo, we try again up to 3 times!
-            max_retries = 3
-            
-            for attempt in range(max_retries):
-                try:
-                    print(f"🧠 Asking AI (Attempt {attempt + 1}/{max_retries})...")
-                    
-                    prompt = f"""
-                    You are a rigorous professor. I have extracted a RANDOM excerpt from a larger document.
-                    
-                    Identify 3 specific, distinct concepts in this text and generate difficult questions about them.
-                    Focus on details found ONLY in this text chunk.
-                    For each question, provide a clear "explanation" of why the answer is correct.
-                    
-                    TEXT CONTENT:
-                    {text[:15000]} 
-                    
-                    Format as JSON array:
-                    [
-                      {{
-                        "id": 1,
-                        "question": "Question text?",
-                        "options": ["Option A", "Option B", "Option C", "Option D"],
-                        "answer": "Option A",
-                        "explanation": "This is correct because...",
-                        "points": 100
-                      }}
-                    ]
-                    Return ONLY raw JSON. No markdown.
-                    """
-
-                    response = await asyncio.to_thread(self.model.generate_content, prompt)
-                    
-                    # Clean the response
-                    clean_json = response.text.replace("```json", "").replace("```", "").strip()
-                    
-                    # Try to parse it - this is where it usually crashes
-                    return json.loads(clean_json)
-
-                except json.JSONDecodeError:
-                    print(f"⚠️ AI Typo detected on attempt {attempt + 1}. Retrying...")
-                    continue # Loop back and try again
-                except Exception as e:
-                    print(f"⚠️ Error on attempt {attempt + 1}: {e}")
-                    continue
-
-            # If we fail 3 times, show error
-            return self._error_response("AI failed to write valid code 3 times. Please try again.")
-
-        except Exception as e:
-            print("❌ SYSTEM ERROR:")
-            traceback.print_exc() 
-            return self._error_response(f"System Error: {str(e)}")
-
-    def _smart_extract_text(self, file_object):
-        """ 
-        Reads Page 1 + 15 Random Pages
+    async def generate_quiz_from_pdf(self, file_content):
         """
+        1. SPEED SCAN: Reads random 10 pages.
+        2. DISPATCH: Sends the text to the Background Worker (Celery).
+        3. RETURN TICKET: Gives the user a Task ID to check later.
+        """
+        # ⚠️ SURVIVOR NOTE: We import here to avoid a "Circular Import" crash
+        # because tasks.py already talks to this file.
+        from app.tasks import generate_quiz_task
+        
+        extracted_text = ""
+        location_note = ""
+        
         try:
-            if hasattr(file_object, 'read'):
-                file_bytes = file_object.read()
-            else:
-                file_bytes = file_object  
+            # --- 1. SPEED SCAN PDF ---
+            # FIX: Removed 'await' because file.file reads instantly
+            content = file_content.read() 
             
-            pdf_reader = PdfReader(io.BytesIO(file_bytes))
+            pdf_reader = PyPDF2.PdfReader(io.BytesIO(content))
             total_pages = len(pdf_reader.pages)
-            text = ""
             
-            print(f"📖 Document has {total_pages} pages. Scavenging random sections...")
+            PAGES_TO_READ = 10
+            if total_pages <= PAGES_TO_READ:
+                start_page = 0
+                end_page = total_pages
+                location_note = "Scanning full document..."
+            else:
+                start_page = random.randint(0, total_pages - PAGES_TO_READ)
+                end_page = start_page + PAGES_TO_READ
+                location_note = f"Scanning sector: Pages {start_page}-{end_page}..."
 
-            indices = {0} 
+            print(f"⚡ Speed Scan: Reading pages {start_page} to {end_page}...")
 
-            if total_pages > 1:
-                remaining_pages = list(range(1, total_pages))
-                num_to_pick = min(15, len(remaining_pages))
-                random_picks = random.sample(remaining_pages, num_to_pick)
-                indices.update(random_picks)
-
-            sorted_indices = sorted(list(indices))
-            
-            for i in sorted_indices:
+            for i in range(start_page, end_page):
                 page_text = pdf_reader.pages[i].extract_text()
                 if page_text:
-                    text += f"\n--- [Page {i+1}] ---\n" + page_text
+                    extracted_text += page_text + "\n"
+
+            # --- 2. DISPATCH TO WORKER ---
+            # We use .delay() to send this to Redis. It returns immediately!
+            print("🚚 Dispatching payload to Worker Queue...")
+            task = generate_quiz_task.delay(extracted_text, location_note)
             
-            return text
+            # --- 3. RETURN TICKET ID ---
+            # The API will now return this Ticket instead of the Quiz.
+            print(f"🎫 Ticket Issued: {task.id}")
+            return {"task_id": task.id, "status": "processing"}
+
         except Exception as e:
             print(f"PDF Read Error: {e}")
-            return ""
+            return self._error_quiz(f"Read Error: {str(e)}")
 
-    def _error_response(self, msg):
+    def _get_working_model(self):
+        """
+        SNIFFER: Hits the API to see what models are ACTUALLY available.
+        """
+        print("🕵️ Sniffing for available AI models...")
+        try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models?key={API_KEY}"
+            response = requests.get(url)
+            
+            if response.status_code != 200:
+                print(f"⚠️ Sniffer failed ({response.status_code}). Defaulting to Flash.")
+                return "models/gemini-1.5-flash"
+
+            data = response.json()
+            available_models = data.get("models", [])
+            usable_models = [m for m in available_models if "generateContent" in m.get("supportedGenerationMethods", [])]
+            
+            if not usable_models:
+                print("⚠️ No usable models found. Defaulting.")
+                return "models/gemini-1.5-flash"
+
+            for m in usable_models:
+                if "gemini-1.5-flash" in m["name"]:
+                    print(f"✅ Target Locked: {m['name']}")
+                    return m["name"]
+            
+            best_choice = usable_models[0]["name"]
+            print(f"✅ Target Locked (Fallback): {best_choice}")
+            return best_choice
+
+        except Exception as e:
+            print(f"Sniffer Error: {e}")
+            return "models/gemini-1.5-flash"
+
+    def _generate_quiz_smart(self, text, location_note=""):
+        """
+        This method is now primarily used by the WORKER (tasks.py),
+        not the main API thread.
+        """
+        model_name = self._get_working_model()
+        if not model_name.startswith("models/"):
+            model_name = f"models/{model_name}"
+
+        url = f"https://generativelanguage.googleapis.com/v1beta/{model_name}:generateContent?key={API_KEY}"
+        
+        safe_text = text[:30000] 
+        
+        prompt_text = f"""
+        You are a zombie apocalypse survival tutor.
+        Create a difficult multiple-choice quiz (5 questions) based strictly on the text below.
+        CONTEXT: {location_note}
+        
+        RULES:
+        1. Return ONLY raw JSON. No markdown.
+        2. Format: [{{ "id": 1, "question": "...", "options": ["A) ...", "B) ..."], "answer": "The full correct option string", "explanation": "..." }}]
+        
+        INTEL:
+        {safe_text}
+        """
+
+        payload = {
+            "contents": [{
+                "parts": [{"text": prompt_text}]
+            }]
+        }
+
+        # --- RETRY LOGIC (EXPONENTIAL BACKOFF) ---
+        max_retries = 3
+        base_delay = 2 
+
+        for attempt in range(max_retries + 1):
+            try:
+                print(f"📡 Sending signal... (Attempt {attempt + 1})")
+                response = requests.post(url, json=payload, headers={"Content-Type": "application/json"})
+                
+                if response.status_code == 429:
+                    if attempt < max_retries:
+                        wait_time = base_delay * (2 ** attempt)
+                        print(f"⚠️ Signal Jammed (429). Holding position for {wait_time}s...")
+                        time.sleep(wait_time)
+                        continue 
+                    else:
+                        print("💀 Radio Dead. Switching to Cached Intel (Fallback Quiz).")
+                        return FALLBACK_QUIZ
+
+                if response.status_code != 200:
+                    print(f"API Error {response.status_code}: {response.text}")
+                    return FALLBACK_QUIZ 
+                
+                data = response.json()
+                
+                if "candidates" not in data or not data["candidates"]:
+                    return FALLBACK_QUIZ
+
+                raw_text = data["candidates"][0]["content"]["parts"][0]["text"]
+                clean_json = raw_text.strip()
+                if clean_json.startswith("```json"): clean_json = clean_json[7:]
+                if clean_json.startswith("```"): clean_json = clean_json[3:]
+                if clean_json.endswith("```"): clean_json = clean_json[:-3]
+                
+                return json.loads(clean_json)
+
+            except Exception as e:
+                print(f"Network Error: {e}")
+                return FALLBACK_QUIZ
+        
+        return FALLBACK_QUIZ
+
+    def _error_quiz(self, reason):
         return [{
-            "id": 1,
-            "question": f"⚠️ ERROR: {msg}", 
-            "options": ["Retry", "Check File", "Wait", "Debug"],
-            "answer": "Retry",
-            "explanation": "Something went wrong in the code.",
-            "points": 0
+            "id": 1, 
+            "question": f"⚠️ {reason}", 
+            "options": ["Wait", "Retry"], 
+            "answer": "Retry", 
+            "explanation": "Something went wrong."
         }]
 
-    async def generate_mock_quiz(self):
-        return self._error_response("Mock Fallback")
-
-    def record_energy(self, db: Session, energy_amount: int):
+    def record_energy(self, db: Session, amount: int):
         user = db.query(User).filter(User.id == 1).first()
         if not user:
             user = User(id=1, username="PlayerOne", energy=0)
             db.add(user)
-            db.commit()
-            db.refresh(user)
-        user.energy += energy_amount
+        user.energy += amount
         db.commit()
-        db.refresh(user)
         return user.energy
